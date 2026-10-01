@@ -35,7 +35,33 @@ jobs:
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project found at: $PROJECT_DIR"
+
+      - name: Fix StringBuffer compile error
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          f = Path(os.environ["PROJECT_DIR"]) / "lib/screens/event_timing_screen.dart"
+          lines = f.read_text(encoding="utf-8").splitlines()
+
+          for i, line in enumerate(lines):
+              if "return StringBuffer()" in line:
+                  lines[i] = line.replace(
+                      "return StringBuffer()",
+                      "return (StringBuffer()",
+                      1
+                  )
+
+                  for j in range(i + 1, len(lines)):
+                      if lines[j].rstrip().endswith(";"):
+                          lines[j] = lines[j].rstrip()[:-1] + ").toString();"
+                          break
+                  break
+
+          f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -48,9 +74,6 @@ jobs:
         with:
           channel: stable
           cache: true
-
-      - name: Flutter version
-        run: flutter --version
 
       - name: Get dependencies
         working-directory: ${{ env.PROJECT_DIR }}
