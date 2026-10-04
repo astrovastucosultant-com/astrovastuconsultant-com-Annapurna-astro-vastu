@@ -1,0 +1,66 @@
+name: Build Annapurna Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "Annapurna-Astro-Vastu-v1.4-audited-fixed.zip"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Flutter project
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path appsrc | Out-Null
+          Expand-Archive -Path Annapurna-Astro-Vastu-v1.4-audited-fixed.zip -DestinationPath appsrc -Force
+          $pubspec = Get-ChildItem -Path appsrc -Filter pubspec.yaml -Recurse | Select-Object -First 1
+          if (-not $pubspec) { throw "pubspec.yaml not found" }
+          "PROJECT_DIR=$($pubspec.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Get dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
+
+      - name: Analyze source
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build Windows release
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build windows --release
+
+      - name: Package Windows app
+        shell: powershell
+        run: |
+          $release = Join-Path $env:PROJECT_DIR "build\windows\x64\runner\Release"
+          if (!(Test-Path $release)) { throw "Windows release folder not found: $release" }
+          Compress-Archive -Path "$release\*" -DestinationPath "Annapurna-Astro-Vastu-Windows.zip" -Force
+
+      - name: Upload Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-Astro-Vastu-Windows
+          path: Annapurna-Astro-Vastu-Windows.zip
+          if-no-files-found: error
+          retention-days: 30
