@@ -1,0 +1,107 @@
+name: Build Annapurna APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "Annapurna-Astro-Vastu-v1.4-audited-fixed.zip"
+      - ".github/workflows/build-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Flutter project
+        shell: bash
+        run: |
+          mkdir -p appsrc
+          unzip -q Annapurna-Astro-Vastu-v1.4-audited-fixed.zip -d appsrc
+
+          PUBSPEC=$(find appsrc -type f -name pubspec.yaml -print -quit)
+
+          if [ -z "$PUBSPEC" ]; then
+            echo "pubspec.yaml not found"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PUBSPEC")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project found at: $PROJECT_DIR"
+
+      - name: Patch StringBuffer return compile error
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          project = Path(os.environ['PROJECT_DIR'])
+          path = project / 'lib' / 'screens' / 'event_timing_screen.dart'
+          text = path.read_text(encoding='utf-8')
+          lines = text.splitlines()
+
+          start = None
+          for i, line in enumerate(lines):
+              if 'return StringBuffer()' in line:
+                  start = i
+                  lines[i] = line.replace('return StringBuffer()', 'return (StringBuffer()', 1)
+                  break
+
+          if start is None:
+              print('StringBuffer return pattern not found; assuming source already fixed.')
+          else:
+              end = None
+              for j in range(start + 1, len(lines)):
+                  stripped = lines[j].rstrip()
+                  if stripped.endswith(';'):
+                      # Close the parenthesized cascade and convert StringBuffer to String.
+                      lines[j] = stripped[:-1] + ').toString();'
+                      end = j
+                      break
+
+              if end is None:
+                  raise SystemExit('Could not find end of StringBuffer cascade')
+
+              path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+              print(f'Patched {path} lines {start+1}-{end+1}')
+          PY
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Get dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-Astro-Vastu-APK
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
