@@ -35,32 +35,44 @@ jobs:
 
           PROJECT_DIR=$(dirname "$PUBSPEC")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project found at: $PROJECT_DIR"
 
-      - name: Fix StringBuffer compile error
+      - name: Patch StringBuffer return compile error
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import os
 
-          f = Path(os.environ["PROJECT_DIR"]) / "lib/screens/event_timing_screen.dart"
-          lines = f.read_text(encoding="utf-8").splitlines()
+          project = Path(os.environ['PROJECT_DIR'])
+          path = project / 'lib' / 'screens' / 'event_timing_screen.dart'
+          text = path.read_text(encoding='utf-8')
+          lines = text.splitlines()
 
+          start = None
           for i, line in enumerate(lines):
-              if "return StringBuffer()" in line:
-                  lines[i] = line.replace(
-                      "return StringBuffer()",
-                      "return (StringBuffer()",
-                      1
-                  )
-
-                  for j in range(i + 1, len(lines)):
-                      if lines[j].rstrip().endswith(";"):
-                          lines[j] = lines[j].rstrip()[:-1] + ").toString();"
-                          break
+              if 'return StringBuffer()' in line:
+                  start = i
+                  lines[i] = line.replace('return StringBuffer()', 'return (StringBuffer()', 1)
                   break
 
-          f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          if start is None:
+              print('StringBuffer return pattern not found; assuming source already fixed.')
+          else:
+              end = None
+              for j in range(start + 1, len(lines)):
+                  stripped = lines[j].rstrip()
+                  if stripped.endswith(';'):
+                      # Close the parenthesized cascade and convert StringBuffer to String.
+                      lines[j] = stripped[:-1] + ').toString();'
+                      end = j
+                      break
+
+              if end is None:
+                  raise SystemExit('Could not find end of StringBuffer cascade')
+
+              path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+              print(f'Patched {path} lines {start+1}-{end+1}')
           PY
 
       - name: Setup Java
@@ -74,6 +86,9 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Flutter version
+        run: flutter --version
 
       - name: Get dependencies
         working-directory: ${{ env.PROJECT_DIR }}
@@ -90,3 +105,4 @@ jobs:
           path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
+          
