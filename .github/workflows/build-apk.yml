@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p appsrc
-          unzip -q "Annapurna-Astro-Vastu-v1.4-jaimini-daily-age-full-analysis-update.zip" -d appsrc
+          unzip -q "Annapurna-Astro-Vastu-v1.4-jaimini-result-ui-corrected.zip" -d appsrc
 
           PUBSPEC=$(find appsrc -type f -name pubspec.yaml -print -quit)
 
