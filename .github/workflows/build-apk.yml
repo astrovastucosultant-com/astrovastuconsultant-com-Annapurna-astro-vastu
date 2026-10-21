@@ -12,35 +12,60 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract Flutter project
+      - name: Extract the exact D9 source ZIP
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="Annapurna-Astro-Vastu-D9-Checklist-Entry-20261021.zip"
+          ZIP_NAME="Annapurna-Astro-Vastu-D9-Checklist-Entry-20261021.zip"
+          echo "Required ZIP: $ZIP_NAME"
+          echo "Repository ZIP files:"
+          find . -maxdepth 3 -type f -name '*.zip' -not -path './.git/*' -print | sort
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP not found in repository root: $ZIP_FILE"
-            ls -lah
+          ZIP_PATH="$(find . -maxdepth 3 -type f -name "$ZIP_NAME" -not -path './.git/*' -print -quit)"
+          if [ -z "$ZIP_PATH" ]; then
+            echo "::error::Missing $ZIP_NAME. Upload this exact ZIP to the repository (preferably its root)."
             exit 1
           fi
-
-          unzip -tq "$ZIP_FILE"
+          echo "Using ZIP: $ZIP_PATH"
+          unzip -tq "$ZIP_PATH"
           mkdir -p appsrc
-          unzip -q "$ZIP_FILE" -d appsrc
+          unzip -q "$ZIP_PATH" -d appsrc
 
-          if [ ! -f appsrc/astro_app/pubspec.yaml ]; then
-            echo "ERROR: Expected Flutter project not found at appsrc/astro_app"
+          test -f appsrc/astro_app/pubspec.yaml || {
+            echo '::error::Expected astro_app/pubspec.yaml was not found in the ZIP.'
             find appsrc -name pubspec.yaml -print
             exit 1
-          fi
+          }
+          echo "PROJECT_DIR=$GITHUB_WORKSPACE/appsrc/astro_app" >> "$GITHUB_ENV"
+          echo "Verified project: $GITHUB_WORKSPACE/appsrc/astro_app"
 
-          echo "PROJECT_DIR=appsrc/astro_app" >> "$GITHUB_ENV"
-          echo "Flutter project: appsrc/astro_app"
+      - name: Validate D9 checklist and merge duplicate asset sections
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          test -f lib/screens/d9_marriage_43_checklist_screen.dart
+          grep -Fq 'D9Marriage43ChecklistScreen' lib/screens/chart_screen.dart
+          grep -Fq 'D9 Checklist UI' lib/screens/chart_screen.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pubspec.yaml')
+          lines = p.read_text(encoding='utf-8').splitlines()
+          duplicate_lines = [i for i, line in enumerate(lines) if line == '  assets:']
+          if len(duplicate_lines) > 1:
+              remove = set(duplicate_lines[1:])
+              p.write_text('\n'.join(line for i, line in enumerate(lines) if i not in remove) + '\n', encoding='utf-8')
+              print(f'Combined {len(duplicate_lines)} assets declarations without removing any assets')
+          else:
+              print('pubspec assets declaration already valid')
+          PY
+          echo 'D9 checklist source verified.'
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -54,10 +79,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter version
+      - name: Show Flutter version
         run: flutter --version
 
-      - name: Get dependencies
+      - name: Install Flutter dependencies
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
@@ -72,3 +97,4 @@ jobs:
           path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
+          
