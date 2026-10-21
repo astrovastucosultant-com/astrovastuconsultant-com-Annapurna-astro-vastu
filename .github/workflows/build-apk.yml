@@ -18,8 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      
-      - name: Extract Flutter project
+  - name: Extract Flutter project
         shell: bash
         run: |
           mkdir -p appsrc
