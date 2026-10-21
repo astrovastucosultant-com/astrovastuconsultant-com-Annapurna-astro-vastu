@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-    
 
 permissions:
   contents: read
@@ -18,69 +17,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
- - name: Extract Flutter project
+      - name: Extract Flutter project
         shell: bash
         run: |
-          mkdir -p appsrc
-          unzip -q "Annapurna-Astro-Vastu-D9-Checklist-Entry-20261021.zip" -d appsrc
-          
-    
-          
+          set -euo pipefail
+          ZIP_FILE="Annapurna-Astro-Vastu-D9-Checklist-Entry-20261021.zip"
 
-          PUBSPEC=$(find appsrc -type f -name pubspec.yaml -print -quit)
-
-          if [ -z "$PUBSPEC" ]; then
-            echo "pubspec.yaml not found"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: ZIP not found in repository root: $ZIP_FILE"
+            ls -lah
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PUBSPEC")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project found at: $PROJECT_DIR"
+          unzip -tq "$ZIP_FILE"
+          mkdir -p appsrc
+          unzip -q "$ZIP_FILE" -d appsrc
 
-      - name: Patch StringBuffer return compile error
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
+          if [ ! -f appsrc/astro_app/pubspec.yaml ]; then
+            echo "ERROR: Expected Flutter project not found at appsrc/astro_app"
+            find appsrc -name pubspec.yaml -print
+            exit 1
+          fi
 
-          project = Path(os.environ['PROJECT_DIR'])
-          path = project / 'lib' / 'screens' / 'event_timing_screen.dart'
-          text = path.read_text(encoding='utf-8')
-          lines = text.splitlines()
-
-          start = None
-          for i, line in enumerate(lines):
-              if 'return StringBuffer()' in line:
-                  start = i
-                  lines[i] = line.replace('return StringBuffer()', 'return (StringBuffer()', 1)
-                  break
-
-          if start is None:
-              print('StringBuffer return pattern not found; assuming source already fixed.')
-          else:
-              end = None
-              for j in range(start + 1, len(lines)):
-                  stripped = lines[j].rstrip()
-                  if stripped.endswith(';'):
-                      # Close the parenthesized cascade and convert StringBuffer to String.
-                      lines[j] = stripped[:-1] + ').toString();'
-                      end = j
-                      break
-
-              if end is None:
-                  raise SystemExit('Could not find end of StringBuffer cascade')
-
-              path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-              print(f'Patched {path} lines {start+1}-{end+1}')
-          PY
+          echo "PROJECT_DIR=appsrc/astro_app" >> "$GITHUB_ENV"
+          echo "Flutter project: appsrc/astro_app"
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -106,4 +72,3 @@ jobs:
           path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
-          
