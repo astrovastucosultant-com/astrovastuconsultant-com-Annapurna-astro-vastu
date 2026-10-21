@@ -2,9 +2,13 @@ name: Build Annapurna APK
 
 on:
   workflow_dispatch:
+    inputs:
+      source_zip:
+        description: "Optional exact project ZIP name. Leave blank to use highest version."
+        required: false
+        type: string
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: read
@@ -13,76 +17,155 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      SOURCE_ZIP: ${{ inputs.source_zip || '' }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract the exact D9 source ZIP
+      - name: Find and extract Flutter app
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_NAME="Annapurna-Astro-Vastu-D9-Checklist-Entry-20261021.zip"
-          echo "Required ZIP: $ZIP_NAME"
-          echo "Repository ZIP files:"
-          find . -maxdepth 3 -type f -name '*.zip' -not -path './.git/*' -print | sort
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, BadZipFile
+          import os
+          import re
+          import sys
+          
+          repo = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          requested = os.environ.get('SOURCE_ZIP', '').strip()
+          
+          # Consider only archives carrying a recognizable Flutter app.
+          candidates = []
+          for archive in sorted(repo.glob('*.zip')) + sorted(repo.glob('*/*.zip')) + sorted(repo.glob('*/*/*.zip')):
+              if archive.is_symlink():
+                  continue
+              try:
+                  with ZipFile(archive) as z:
+                      names = z.namelist()
+                      pubspecs = [n for n in names if n == 'pubspec.yaml' or n.endswith('/pubspec.yaml')]
+                      valid = [n for n in pubspecs if n in ('pubspec.yaml', 'astro_app/pubspec.yaml') or n.endswith('/astro_app/pubspec.yaml')]
+                      if len(valid) != 1:
+                          continue
+                      match = re.search(r'^version:\s*(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?', z.read(valid[0]).decode('utf-8'), re.M)
+                      if not match:
+                          continue
+                      nums = tuple(int(x or 0) for x in match.groups())
+                      version_key = (nums[3], nums[:3])
+                      candidates.append((version_key, archive, valid[0]))
+              except (BadZipFile, UnicodeDecodeError, OSError):
+                  continue
+          
+          if requested:
+              chosen = [c for c in candidates if str(c[1].relative_to(repo)) == requested or c[1].name == requested]
+              if len(chosen) != 1:
+                  sys.exit(f'ERROR: SOURCE_ZIP {requested!r} is not a unique, valid Flutter ZIP. Available: {[str(c[1].relative_to(repo)) for c in candidates]}')
+          elif candidates:
+              highest = max(c[0] for c in candidates)
+              chosen = [c for c in candidates if c[0] == highest]
+              if len(chosen) != 1:
+                  sys.exit(f'ERROR: More than one ZIP has the latest app version: {[str(c[1].relative_to(repo)) for c in chosen]}. Set the workflow_dispatch source_zip input.')
+          else:
+              chosen = []
+          
+          if chosen:
+              _, zip_path, pubspec_name = chosen[0]
+              print('Using ZIP:', zip_path.relative_to(repo))
+              with ZipFile(zip_path) as z:
+                  if z.testzip() is not None:
+                      sys.exit(f'ERROR: Corrupt ZIP: {zip_path}')
+                  for item in z.infolist():
+                      target = Path(item.filename)
+                      if target.is_absolute() or '..' in target.parts:
+                          sys.exit(f'ERROR: Unsafe ZIP member {item.filename}')
+                  dest = repo / '_appsrc'
+                  dest.mkdir(exist_ok=True)
+                  z.extractall(dest)
+              project = dest / Path(pubspec_name).parent
+          else:
+              project = repo / 'astro_app' if (repo / 'astro_app/pubspec.yaml').is_file() else repo
+              print('No valid app ZIP; using checked-out source:', project)
+          
+          if not (project / 'pubspec.yaml').is_file():
+              sys.exit('ERROR: pubspec.yaml not found')
+          for name in ('lib/main.dart', 'android/app/build.gradle.kts'):
+              if not (project / name).is_file():
+                  sys.exit(f'ERROR: Flutter project missing {name}: {project}')
+          
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
+              f.write(f'PROJECT_DIR={project}\n')
+          print('Selected Flutter project:', project)
+          PY
 
-          ZIP_PATH="$(find . -maxdepth 3 -type f -name "$ZIP_NAME" -not -path './.git/*' -print -quit)"
-          if [ -z "$ZIP_PATH" ]; then
-            echo "::error::Missing $ZIP_NAME. Upload this exact ZIP to the repository (preferably its root)."
-            exit 1
-          fi
-          echo "Using ZIP: $ZIP_PATH"
-          unzip -tq "$ZIP_PATH"
-          mkdir -p appsrc
-          unzip -q "$ZIP_PATH" -d appsrc
+      - name: Normalize duplicate Flutter assets entries
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('pubspec.yaml')
+          lines = p.read_text(encoding='utf-8').splitlines(keepends=True)
+          starts = [i for i, line in enumerate(lines) if re.fullmatch(r'  assets:\s*', line.strip('\r\n'))]
+          if len(starts) > 1:
+              collected = []
+              seen = set()
+              remove = set()
+              for pos in starts:
+                  end = pos + 1
+                  while end < len(lines) and (lines[end].startswith('    - ') or not lines[end].strip()):
+                      end += 1
+                  if pos != starts[0]:
+                      remove.add(pos)
+                      remove.update(range(pos + 1, end))
+                  else:
+                      remove.update(range(pos + 1, end))
+                  for item in lines[pos + 1:end]:
+                      if item.startswith('    - '):
+                          key = item.strip()
+                          if key not in seen:
+                              collected.append(item)
+                              seen.add(key)
+              result = []
+              for i, line in enumerate(lines):
+                  if i == starts[0]:
+                      result.append(line)
+                      result.extend(collected)
+                  elif i not in remove:
+                      result.append(line)
+              p.write_text(''.join(result), encoding='utf-8')
+              print('Merged duplicate assets declarations:', len(starts), 'to 1. Entries:', len(collected))
+          else:
+              print('Assets section already normalized.')
+          PY
 
-          test -f appsrc/astro_app/pubspec.yaml || {
-            echo '::error::Expected astro_app/pubspec.yaml was not found in the ZIP.'
-            find appsrc -name pubspec.yaml -print
-            exit 1
-          }
-          echo "PROJECT_DIR=$GITHUB_WORKSPACE/appsrc/astro_app" >> "$GITHUB_ENV"
-          echo "Verified project: $GITHUB_WORKSPACE/appsrc/astro_app"
-
-      - name: Validate D9 checklist and merge duplicate asset sections
+      - name: Verify D9 checklist integration
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -euo pipefail
           test -f lib/screens/d9_marriage_43_checklist_screen.dart
           grep -Fq 'D9Marriage43ChecklistScreen' lib/screens/chart_screen.dart
-          grep -Fq 'D9 Checklist UI' lib/screens/chart_screen.dart
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('pubspec.yaml')
-          lines = p.read_text(encoding='utf-8').splitlines()
-          duplicate_lines = [i for i, line in enumerate(lines) if line == '  assets:']
-          if len(duplicate_lines) > 1:
-              remove = set(duplicate_lines[1:])
-              p.write_text('\n'.join(line for i, line in enumerate(lines) if i not in remove) + '\n', encoding='utf-8')
-              print(f'Combined {len(duplicate_lines)} assets declarations without removing any assets')
-          else:
-              print('pubspec assets declaration already valid')
-          PY
-          echo 'D9 checklist source verified.'
+          echo 'D9 marriage matching screen is connected.'
 
-      - name: Setup Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.5'
           channel: stable
           cache: true
 
-      - name: Show Flutter version
-        run: flutter --version
-
-      - name: Install Flutter dependencies
+      - name: Resolve packages
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
@@ -90,10 +173,10 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Annapurna-Astro-Vastu-APK
+          name: Annapurna-Astro-Vastu-D9-APK
           path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
