@@ -18,11 +18,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      
       - name: Extract Flutter project
         shell: bash
         run: |
           mkdir -p appsrc
-          Annapurna-Astro-Vastu-D9-Checklist-Entry-20261021.zip
+          unzip -q "Annapurna-Astro-Vastu-D9-Checklist-Entry-20261021.zip" -d appsrc
+          
+    
+          
 
           PUBSPEC=$(find appsrc -type f -name pubspec.yaml -print -quit)
 
