@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_zip:
-        description: 'Optional exact project ZIP filename; leave blank to use highest version'
+        description: 'Optional exact FULL project ZIP filename; leave blank for the newest complete Flutter source'
         required: false
         type: string
   push:
@@ -31,60 +31,92 @@ jobs:
           from pathlib import Path, PurePosixPath
           from zipfile import ZipFile, BadZipFile
           import os, re, stat, sys
+
           repo = Path(os.environ['GITHUB_WORKSPACE']).resolve()
-          requested = os.environ.get('SOURCE_ZIP','').strip()
-          candidates = []
+          requested = os.environ.get('SOURCE_ZIP', '').strip()
           files = sorted(set(repo.glob('*.zip')) | set(repo.glob('*/*.zip')) | set(repo.glob('*/*/*.zip')))
+          candidates = []
+
           for archive in files:
-              if archive.is_symlink():
+              if archive.is_symlink() or not archive.is_file():
+                  continue
+              if 'PATCH' in archive.name.upper():
+                  print('Skipping patch:', archive.name)
                   continue
               try:
                   with ZipFile(archive) as z:
-                      pubspecs = [n for n in z.namelist() if n == 'pubspec.yaml' or n == 'astro_app/pubspec.yaml' or n.endswith('/astro_app/pubspec.yaml')]
+                      members = set(z.namelist())
+                      pubspecs = [n for n in members if n == 'pubspec.yaml' or n == 'astro_app/pubspec.yaml' or n.endswith('/astro_app/pubspec.yaml')]
                       if len(pubspecs) != 1:
                           continue
-                      match = re.search(r'^version:\s*(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?', z.read(pubspecs[0]).decode('utf-8'), re.M)
+                      pubspec = pubspecs[0]
+                      prefix = PurePosixPath(pubspec).parent
+                      expected = {
+                          str(prefix / 'lib/main.dart'),
+                          str(prefix / 'android/app/build.gradle.kts'),
+                      }
+                      if not expected.issubset(members):
+                          print('Skipping incomplete Flutter archive:', archive.name)
+                          continue
+                      match = re.search(r'^version:\s*(\d+)\.(\d+)\.(\d+)(?:\+(\d+))?', z.read(pubspec).decode('utf-8'), re.M)
                       if not match:
                           continue
-                      nums = tuple(int(v or 0) for v in match.groups())
-                      candidates.append(((nums[3], nums[:3]), archive, pubspecs[0]))
-              except (BadZipFile, UnicodeDecodeError, OSError):
+                      pubver = tuple(int(v or 0) for v in match.groups())
+                      filever_match = re.search(r'v(\d+)\.(\d+)\.(\d+)', archive.name, re.I)
+                      filever = tuple(map(int, filever_match.groups())) if filever_match else (0,0,0)
+                      candidates.append((filever, pubver, archive, pubspec))
+              except (BadZipFile, UnicodeDecodeError, OSError, ValueError):
                   continue
+
           if requested:
-              chosen = [c for c in candidates if c[1].name == requested or str(c[1].relative_to(repo)) == requested]
+              chosen = [c for c in candidates if c[2].name == requested or str(c[2].relative_to(repo)) == requested]
               if len(chosen) != 1:
-                  sys.exit(f'ERROR: Requested ZIP {requested!r} is missing or not unique.')
+                  sys.exit('ERROR: Requested ZIP is not a unique complete Flutter FULL source ZIP: ' + requested)
+              selected = chosen[0]
           elif candidates:
-              latest = max(c[0] for c in candidates)
-              chosen = [c for c in candidates if c[0] == latest]
-              if len(chosen) != 1:
-                  sys.exit('ERROR: Multiple archives have the same latest version; use source_zip.')
+              # Choose latest SOURCE by filename version rather than pubspec version;
+              # several historical projects have identical pubspec versions.
+              # Resolve duplicate archives without failing an automatic push run.
+              # Exact `source_zip` input always overrides this auto-selection.
+              top_version = max((c[0], c[1]) for c in candidates)
+              top = [c for c in candidates if (c[0], c[1]) == top_version]
+              if len(top) > 1:
+                  from hashlib import sha256
+                  digests = {sha256(c[2].read_bytes()).hexdigest() for c in top}
+                  if len(digests) > 1:
+                      sys.exit('ERROR: Multiple DIFFERENT latest-version archives. Set source_zip to exact file name.')
+                  else:
+                      print('Duplicate ZIPs contain identical bytes; selecting canonical name.')
+              selected = min(top, key=lambda c: (
+                  1 if re.search(r'\s*\(\d+\)\.zip$', c[2].name, re.I) else 0,
+                  len(c[2].relative_to(repo).parts),
+                  len(str(c[2].relative_to(repo))),
+                  str(c[2].relative_to(repo)).lower(),
+              ))
           else:
-              chosen = []
-          if chosen:
-              _, archive, pubspec = chosen[0]
-              print('Using:', archive.relative_to(repo))
-              dest = repo / '_appsrc'
-              dest.mkdir(exist_ok=True)
-              with ZipFile(archive) as z:
-                  if z.testzip() is not None:
-                      sys.exit('ERROR: Damaged ZIP.')
-                  if sum(x.file_size for x in z.infolist()) > 1_500_000_000:
-                      sys.exit('ERROR: ZIP too large after extraction.')
-                  for x in z.infolist():
-                      path = PurePosixPath(x.filename)
-                      if path.is_absolute() or '..' in path.parts or '\\' in x.filename or stat.S_ISLNK(x.external_attr >> 16):
-                          sys.exit(f'ERROR: Unsafe ZIP path {x.filename!r}')
-                  z.extractall(dest)
-              project = dest / Path(pubspec).parent
-          else:
-              project = repo / 'astro_app' if (repo / 'astro_app/pubspec.yaml').is_file() else repo
-          for name in ('pubspec.yaml','lib/main.dart','android/app/build.gradle.kts'):
+              sys.exit('ERROR: No complete Flutter FULL source ZIP found in repository.')
+
+          _, _, archive, pubspec = selected
+          print('Using full Flutter source ZIP:', archive.relative_to(repo))
+          dest = repo / '_appsrc'
+          dest.mkdir(exist_ok=True)
+          with ZipFile(archive) as z:
+              if z.testzip() is not None:
+                  sys.exit('ERROR: Damaged ZIP archive')
+              if sum(x.file_size for x in z.infolist()) > 1_500_000_000:
+                  sys.exit('ERROR: ZIP too large after extraction')
+              for item in z.infolist():
+                  path = PurePosixPath(item.filename)
+                  if path.is_absolute() or '..' in path.parts or '\\' in item.filename or stat.S_ISLNK(item.external_attr >> 16):
+                      sys.exit('ERROR: Unsafe ZIP path: ' + item.filename)
+              z.extractall(dest)
+          project = dest / Path(pubspec).parent
+          for name in ('pubspec.yaml', 'lib/main.dart', 'android/app/build.gradle.kts'):
               if not (project / name).is_file():
-                  sys.exit(f'ERROR: Flutter file missing: {project / name}')
-          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+                  sys.exit('ERROR: Flutter file missing: ' + str(project / name))
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
               f.write(f'PROJECT_DIR={project}\n')
-          print('Project:', project)
+          print('Flutter project:', project)
           PY
 
       - name: Normalize duplicate Flutter assets entries
@@ -95,27 +127,33 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          p=Path('pubspec.yaml')
-          lines=p.read_text(encoding='utf-8').splitlines(keepends=True)
-          starts=[i for i,line in enumerate(lines) if re.fullmatch(r'  assets:\s*',line.strip('\r\n'))]
-          if len(starts)>1:
-              collected=[]; seen=set(); remove=set()
+          p = Path('pubspec.yaml')
+          lines = p.read_text(encoding='utf-8').splitlines(keepends=True)
+          starts = [i for i, line in enumerate(lines) if re.fullmatch(r'  assets:\s*', line.strip('\r\n'))]
+          if len(starts) > 1:
+              collected = []
+              seen = set()
+              remove = set()
               for pos in starts:
-                  end=pos+1
-                  while end<len(lines) and (lines[end].startswith('    - ') or not lines[end].strip()):
-                      end+=1
-                  remove.update(range(pos+1,end))
-                  if pos!=starts[0]: remove.add(pos)
-                  for item in lines[pos+1:end]:
+                  end = pos + 1
+                  while end < len(lines) and (lines[end].startswith('    - ') or not lines[end].strip()):
+                      end += 1
+                  remove.update(range(pos + 1, end))
+                  if pos != starts[0]:
+                      remove.add(pos)
+                  for item in lines[pos + 1:end]:
                       if item.startswith('    - ') and item.strip() not in seen:
-                          seen.add(item.strip()); collected.append(item)
-              result=[]
-              for i,line in enumerate(lines):
-                  if i==starts[0]:
-                      result.append(line);result.extend(collected)
-                  elif i not in remove: result.append(line)
-              p.write_text(''.join(result),encoding='utf-8')
-              print('Assets normalized; items:',len(collected))
+                          seen.add(item.strip())
+                          collected.append(item)
+              result = []
+              for i, line in enumerate(lines):
+                  if i == starts[0]:
+                      result.append(line)
+                      result.extend(collected)
+                  elif i not in remove:
+                      result.append(line)
+              p.write_text(''.join(result), encoding='utf-8')
+              print('Assets normalized; items:', len(collected))
           PY
 
       - name: Verify D9 checklist integration
@@ -188,5 +226,4 @@ jobs:
           path: ${{ runner.temp }}/annapurna-build-attempt-*.log
           if-no-files-found: ignore
           retention-days: 14
-          
           
