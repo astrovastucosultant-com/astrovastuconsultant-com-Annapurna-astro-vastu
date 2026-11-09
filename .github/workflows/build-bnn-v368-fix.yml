@@ -1,0 +1,169 @@
+name: Build BNN v1.4.368 UI Fix Source and APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bnn-v368-fix.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.368-BNN-Progression-Source-Priority-FULL.zip'
+
+permissions:
+  contents: read
+
+jobs:
+  build-v368-ui-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate and extract v368 full source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import os, re, stat, json
+          name='Annapurna-Astro-Vastu-v1.4.368-BNN-Progression-Source-Priority-FULL.zip'
+          archive=Path(os.environ['GITHUB_WORKSPACE']) / name
+          assert archive.is_file(), 'Upload v368 FULL Source ZIP to repository root first'
+          with ZipFile(archive) as z:
+              assert z.testzip() is None, 'ZIP CRC failure'
+              names=z.namelist()
+              assert len(names)==len(set(names)), 'Duplicate ZIP member'
+              for info in z.infolist():
+                  p=PurePosixPath(info.filename)
+                  assert not p.is_absolute() and '..' not in p.parts, info.filename
+                  assert '\\' not in info.filename, info.filename
+                  assert not stat.S_ISLNK(info.external_attr >> 16), info.filename
+              pub=z.read('astro_app/pubspec.yaml').decode('utf-8')
+              assert re.search(r'^version:\s*1\.4\.368\+368\s*$',pub,re.M)
+              for file in (
+                  'astro_app/lib/main.dart',
+                  'astro_app/lib/astrology/bnn_jupiter_cycle_service.dart',
+                  'astro_app/lib/astrology/bnn_cycle_result_service.dart',
+                  'astro_app/lib/astrology/bnn_special_multi_planet_service.dart',
+                  'astro_app/test/bnn_progression_source_priority_v368_test.dart',
+                  'astro_app/test/bnn_multi_planet_source_v367_test.dart',
+                  'astro_app/BNN_V368_PROGRESSIONS_AND_SOURCE_PRIORITY_AUDIT.md'):
+                  assert file in names, 'Missing '+file
+              json.loads(z.read('astro_app/assets/bnn/bnn_special_multi_planet_examples_v367.json'))
+              z.extractall(Path(os.environ['RUNNER_TEMP'])/'annapurna_v368')
+          app=Path(os.environ['RUNNER_TEMP'])/'annapurna_v368'/'astro_app'
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write(f'APP_DIR={app}\n')
+          print('Validated ZIP, version, source and source-catalog JSON:',name)
+          PY
+
+      - name: Fix transparent Material ancestor in BNN result expansion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import os
+          source=Path(os.environ['GITHUB_WORKSPACE'])/'Annapurna-Astro-Vastu-v1.4.368-BNN-Progression-Source-Priority-FULL.zip'
+          output=Path(os.environ['GITHUB_WORKSPACE'])/'Annapurna-Astro-Vastu-v1.4.368-UI-ListTile-Fix-FULL.zip'
+          target='astro_app/lib/screens/bnn_cycle_result_card.dart'
+          anchor='      child:Theme(\n        data:Theme.of(context).copyWith(dividerColor:Colors.transparent),\n        child:ExpansionTile(\n'
+          replacement='      child:Theme(\n        data:Theme.of(context).copyWith(dividerColor:Colors.transparent),\n        child:Material(\n          type:MaterialType.transparency,\n          child:ExpansionTile(\n'
+          end='          ],\n        ),\n      ),\n    );\n  }\n}\n'
+          end_new='          ],\n          ),\n        ),\n      ),\n    );\n  }\n}\n'
+          appfile=Path(os.environ['APP_DIR'])/'lib/screens/bnn_cycle_result_card.dart'
+          original=appfile.read_text(encoding='utf-8')
+          assert original.count(anchor)==1 and original.count(end)==1, 'Unsupported source revision; refusing an unsafe patch'
+          changed=original.replace(anchor,replacement).replace(end,end_new)
+          assert 'type:MaterialType.transparency' in changed
+          appfile.write_text(changed,encoding='utf-8')
+          with ZipFile(source) as src,ZipFile(output,'w') as dst:
+              assert src.testzip() is None
+              for info in src.infolist():
+                  data=changed.encode('utf-8') if info.filename==target else src.read(info.filename)
+                  dst.writestr(info,data)
+          with ZipFile(output) as packed:
+              assert packed.testzip() is None
+              assert packed.read(target).decode('utf-8')==changed
+          print('Minimal BNN ListTile Material fix applied; full source ZIP ready:', output.name)
+          PY
+
+      - name: Upload corrected Full Flutter Source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.368-UI-FIX-FULL-SOURCE
+          path: Annapurna-Astro-Vastu-v1.4.368-UI-ListTile-Fix-FULL.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle dependencies
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve Flutter packages
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+
+      - name: Run BNN progressions, source, combination and remedy regression tests
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test --no-pub --reporter expanded \
+            test/bnn_jupiter_cycle_v355_test.dart \
+            test/bnn_cycle_contact_results_v357_test.dart \
+            test/bnn_cycle_result_highlight_v358_test.dart \
+            test/bnn_planet_combinations_v359_test.dart \
+            test/bnn_health_caution_v363_test.dart \
+            test/bnn_mrityunjaya_remedy_v364_test.dart \
+            test/bnn_multi_planet_source_v367_test.dart \
+            test/bnn_progression_source_priority_v368_test.dart
+
+      - name: Compile release APK
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          for n in 1 2 3; do
+            log="${RUNNER_TEMP}/bnn-v368-build-${n}.log"
+            if flutter build apk --release --no-pub 2>&1 | tee "$log"; then
+              echo 'APK compilation SUCCESS'
+              exit 0
+            fi
+            if ! grep -Eiq 'status code 403|403 Forbidden|Could not GET|Could not download|Read timed out|Connection reset|Temporary failure in name resolution|UnknownHostException' "$log"; then
+              echo 'Build failed (non-transient issue)'
+              exit 1
+            fi
+            if [[ "$n" == 3 ]]; then exit 1; fi
+            sleep "$((n*20))"
+          done
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.368-UI-FIX-APK
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build error logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v368-UI-FIX-Build-Logs
+          path: ${{ runner.temp }}/bnn-v368-build-*.log
+          if-no-files-found: ignore
+          retention-days: 14
