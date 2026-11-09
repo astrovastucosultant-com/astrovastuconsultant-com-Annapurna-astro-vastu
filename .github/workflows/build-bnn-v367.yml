@@ -1,0 +1,127 @@
+name: Build BNN v1.4.367 Full Source and APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bnn-v367.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.367-BNN-Special-3-4-Source-FULL.zip'
+
+permissions:
+  contents: read
+
+jobs:
+  build-v367:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate and extract exact v367 Flutter source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import os, re, stat
+          name = 'Annapurna-Astro-Vastu-v1.4.367-BNN-Special-3-4-Source-FULL.zip'
+          archive = Path(os.environ['GITHUB_WORKSPACE']) / name
+          assert archive.is_file(), f'Upload {name} to the repository root first'
+          with ZipFile(archive) as z:
+              assert z.testzip() is None, 'ZIP CRC failed'
+              assert len(z.namelist()) == len(set(z.namelist())), 'Duplicate paths'
+              for file in z.infolist():
+                  path = PurePosixPath(file.filename)
+                  assert not path.is_absolute() and '..' not in path.parts, file.filename
+                  assert '\\' not in file.filename, file.filename
+                  assert not stat.S_ISLNK(file.external_attr >> 16), file.filename
+              version = z.read('astro_app/pubspec.yaml').decode('utf-8')
+              assert re.search(r'^version:\s*1\.4\.367\+367\s*$', version, re.M)
+              assert 'astro_app/lib/main.dart' in z.namelist()
+              assert 'astro_app/test/bnn_planet_combinations_v359_test.dart' in z.namelist()
+              assert 'astro_app/test/bnn_multi_planet_source_v367_test.dart' in z.namelist()
+              assert 'astro_app/assets/bnn/bnn_special_multi_planet_examples_v367.json' in z.namelist()
+              assert 'astro_app/lib/astrology/bnn_special_multi_planet_service.dart' in z.namelist()
+              z.extractall(Path(os.environ['RUNNER_TEMP']) / 'annapurna_v367')
+          app = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v367' / 'astro_app'
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
+              f.write(f'APP_DIR={app}\n')
+          print('Full source validated:', name)
+          PY
+
+      - name: Upload exact FULL Flutter Source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.367-FULL-SOURCE
+          path: Annapurna-Astro-Vastu-v1.4.367-BNN-Special-3-4-Source-FULL.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle dependencies
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve Flutter packages
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+
+      - name: Test BNN pair/group display and Mrityunjaya safeguards
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test --no-pub --reporter expanded \
+            test/bnn_planet_combinations_v359_test.dart \
+            test/bnn_multi_planet_source_v367_test.dart \
+            test/bnn_health_caution_v363_test.dart \
+            test/bnn_mrityunjaya_remedy_v364_test.dart
+
+      - name: Compile release APK
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          for n in 1 2 3; do
+            log="${RUNNER_TEMP}/bnn-v367-build-${n}.log"
+            if flutter build apk --release --no-pub 2>&1 | tee "$log"; then
+              echo 'APK compilation SUCCESS'
+              exit 0
+            fi
+            if ! grep -Eiq 'status code 403|403 Forbidden|Could not GET|Could not download|Read timed out|Connection reset|Temporary failure in name resolution|UnknownHostException' "$log"; then
+              echo 'Build failed (not a transient network issue)'
+              exit 1
+            fi
+            if [[ "$n" == 3 ]]; then exit 1; fi
+            sleep "$((n * 20))"
+          done
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.367-APK
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build error logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v367-Build-Logs
+          path: ${{ runner.temp }}/bnn-v367-build-*.log
+          if-no-files-found: ignore
+          retention-days: 14
