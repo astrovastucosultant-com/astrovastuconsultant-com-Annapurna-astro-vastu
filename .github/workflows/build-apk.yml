@@ -1,18 +1,18 @@
-name: Build BNN v1.4.364 Full Source and APK
+name: Build BNN v1.4.365 Full Source and APK
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/build-bnn-v364.yml'
+      - '.github/workflows/build-bnn-v365.yml'
 
 permissions:
   contents: read
 
 jobs:
-  build-v364:
+  build-v365:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 80
     steps:
       - name: Checkout existing Annapurna project
         uses: actions/checkout@v4
