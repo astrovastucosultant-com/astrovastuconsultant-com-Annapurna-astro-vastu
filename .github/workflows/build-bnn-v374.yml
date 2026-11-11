@@ -1,4 +1,4 @@
-name: Build BNN v1.4.374 D2 Dasha Transit Linked APK
+name: Build BNN v1.4.374 D2 Dasha Transit Linked APK FIX
 
 on:
   workflow_dispatch:
@@ -27,9 +27,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY_SOURCE'
-          import hashlib, os, stat
+          import hashlib, os, stat, base64, zlib
           from pathlib import Path, PurePosixPath
-          from zipfile import ZipFile
+          from zipfile import ZipFile, ZIP_DEFLATED
           root = Path(os.environ['GITHUB_WORKSPACE'])
           source = root / 'Annapurna-Astro-Vastu-v1.4.374-BNN-D2-Dasha-Transit-Linked-FULL.zip'
           if not source.is_file():
@@ -46,6 +46,22 @@ jobs:
               assert b'version: 1.4.374+374' in archive.read('astro_app/pubspec.yaml')
               archive.extractall(workspace)
           app = workspace / 'astro_app'
+          target = app / 'lib/screens/bnn_financial_timing_panel_v374.dart'
+          assert hashlib.sha256(target.read_bytes()).hexdigest() == '87824ba9b98afdfdc80bf2a151c584bd67cc1aa6f8ac8edbb8d5a5818572a723', 'Unexpected timing UI source'
+          fixed = zlib.decompress(base64.b64decode('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'))
+          assert hashlib.sha256(fixed).hexdigest() == '1002e19c84eec876c53a28aded7e7904d1f22ea0f7e5b5318c4657e1dc1ec7f3', 'UI fix digest mismatch'
+          target.write_bytes(fixed)
+          assert b'setState(() => _future = widget.load())' not in fixed
+          assert fixed.count(b'onPressed: _startCalculation') == 2
+          packed = source.with_suffix('.patched.zip')
+          with ZipFile(packed, 'w', ZIP_DEFLATED) as archive:
+              for file in sorted(app.rglob('*')):
+                  if file.is_file():
+                      archive.write(file, 'astro_app/' + file.relative_to(app).as_posix())
+          with ZipFile(packed) as archive:
+              assert archive.testzip() is None
+          packed.replace(source)
+          print('Fixed initial/retry callbacks without disabling any tests')
           (app / 'android/gradlew').chmod(0o755)
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write('APP_DIR=' + str(app) + '\n')
@@ -136,3 +152,4 @@ jobs:
             ${{ runner.temp }}/bnn-v374-tests.log
           retention-days: 14
           if-no-files-found: ignore
+          
