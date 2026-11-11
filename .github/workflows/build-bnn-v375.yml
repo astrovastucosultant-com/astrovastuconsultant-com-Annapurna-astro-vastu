@@ -1,0 +1,148 @@
+name: Build BNN v1.4.375 Goel Source Transit Support APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-bnn-v375.yml'
+      - 'Annapurna-v1.4.375-Goel-Transit-Delivery.zip'
+
+permissions:
+  contents: read
+
+jobs:
+  build-v375:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - name: Checkout existing Annapurna source
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-v1.4.375-Goel-Transit-Delivery.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify and extract complete v375 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_SOURCE'
+          import hashlib, os, stat
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          from io import BytesIO
+          root = Path(os.environ['GITHUB_WORKSPACE'])
+          delivery = root / 'Annapurna-v1.4.375-Goel-Transit-Delivery.zip'
+          if not delivery.is_file():
+              raise SystemExit('Upload Annapurna-v1.4.375-Goel-Transit-Delivery.zip to repository root first')
+          payload = delivery.read_bytes()
+          assert hashlib.sha256(payload).hexdigest() == '70abaa40200290b79bb08cc0a9952a74fe8d1b63307a6a75a85c7a6845daddbc', 'Delivery ZIP checksum mismatch'
+          with ZipFile(BytesIO(payload)) as package:
+              assert package.testzip() is None, 'Corrupt delivery ZIP'
+              source_bytes = package.read('Annapurna-Astro-Vastu-v1.4.375-Goel-Transit-FULL.zip')
+          assert hashlib.sha256(source_bytes).hexdigest() == 'd97152b99daef2f811d07b8a992de7bbccc1e6048f2defb54c3429cd8cd9a736', 'Inner source ZIP checksum mismatch'
+          source = root / 'Annapurna-Astro-Vastu-v1.4.375-Goel-Transit-FULL.zip'
+          source.write_bytes(source_bytes)
+          workspace = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v375'
+          with ZipFile(source) as archive:
+              assert archive.testzip() is None, 'Corrupt source ZIP'
+              for item in archive.infolist():
+                  path = PurePosixPath(item.filename)
+                  assert not path.is_absolute() and '..' not in path.parts
+                  assert path.parts and path.parts[0] == 'astro_app'
+                  assert not stat.S_ISLNK(item.external_attr >> 16)
+              assert b'version: 1.4.375+375' in archive.read('astro_app/pubspec.yaml')
+              archive.extractall(workspace)
+          app = workspace / 'astro_app'
+          (app / 'android/gradlew').chmod(0o755)
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('APP_DIR=' + str(app) + '\n')
+          print('Verified v375 D2 rule/dasha/transit source')
+          PY_SOURCE
+
+      - name: Upload v375 Full Source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.375-FULL-SOURCE
+          path: Annapurna-Astro-Vastu-v1.4.375-Goel-Transit-FULL.zip
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve Flutter packages
+        working-directory: ${{ env.APP_DIR }}
+        run: flutter pub get
+
+      - name: Verify financial evidence rules
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          dart run tool/verify_financial_v373.dart
+          dart run tool/verify_financial_timing_v374.dart
+          dart run tool/verify_goel_transit_v375.dart
+
+      - name: Test financial cards, D2 and BNN regression
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test --no-pub --reporter expanded \
+            test/goel_transit_support_ui_v375_test.dart \
+            test/bnn_financial_timing_ui_v374_test.dart \
+            test/bnn_financial_ui_v373_test.dart \
+            test/d2_wealth_evaluation_service_test.dart \
+            test/d2_rule_conflict_service_test.dart \
+            test/bnn_font_size_v372_test.dart \
+            test/bnn_font_ui_v372_test.dart \
+            test/bnn_transit_sampling_v372_test.dart \
+            test/bnn_event_convergence_v371_test.dart \
+            test/bnn_life_event_evidence_gate_v370_test.dart \
+            test/bnn_life_event_timing_v369_test.dart \
+            test/bnn_jupiter_cycle_v355_test.dart \
+            test/bnn_cycle_contact_results_v357_test.dart \
+            test/bnn_cycle_result_highlight_v358_test.dart \
+            test/bnn_planet_combinations_v359_test.dart \
+            test/bnn_health_caution_v363_test.dart \
+            test/bnn_mrityunjaya_remedy_v364_test.dart \
+            test/bnn_multi_planet_source_v367_test.dart \
+            test/bnn_progression_source_priority_v368_test.dart 2>&1 | tee "${{ runner.temp }}/bnn-v375-tests.log"
+
+      - name: Build release APK
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build apk --release --no-pub 2>&1 | tee "${{ runner.temp }}/bnn-v375-build.log"
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.375-APK
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload build diagnostics if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.375-Diagnostics
+          path: |
+            ${{ runner.temp }}/bnn-v375-build.log
+            ${{ runner.temp }}/bnn-v375-tests.log
+          retention-days: 14
+          if-no-files-found: ignore
