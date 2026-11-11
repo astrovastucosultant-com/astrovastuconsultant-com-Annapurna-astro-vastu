@@ -1,4 +1,4 @@
-name: Build BNN v1.4.373 Full Source APK FIX2
+name: Build BNN v1.4.373 Full Source APK FIX3
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ jobs:
           python3 - <<'PY_SOURCE'
           import hashlib, os, stat
           from pathlib import Path, PurePosixPath
-          from zipfile import ZipFile
+          from zipfile import ZipFile, ZIP_DEFLATED
           root = Path(os.environ['GITHUB_WORKSPACE'])
           source = root / 'Annapurna-Astro-Vastu-v1.4.373-BNN-Financial-Rule-Evidence-FULL.zip'
           if not source.is_file():
@@ -46,6 +46,46 @@ jobs:
               assert b'version: 1.4.373+373' in archive.read('astro_app/pubspec.yaml')
               archive.extractall(workspace)
           app = workspace / 'astro_app'
+          # Pass already loaded, real service results into the UI test. The default
+          # production path still uses BnnLifeEventTimingService.build.
+          panel = app / 'lib/screens/bnn_life_events_panel.dart'
+          text = panel.read_text()
+          old = '  const BnnLifeEventsPanel({super.key, required this.chart, this.birthData});'
+          new = ('  final Future<List<BnnLifeEventReview>>? reviewFuture;\n'
+                 '  const BnnLifeEventsPanel({super.key, required this.chart, this.birthData, this.reviewFuture});')
+          assert text.count(old) == 1, 'Unexpected panel constructor'
+          text = text.replace(old, new)
+          old = '      BnnLifeEventTimingService.build(chart: widget.chart);'
+          new = '      widget.reviewFuture ?? BnnLifeEventTimingService.build(chart: widget.chart);'
+          assert text.count(old) == 1, 'Unexpected review loader'
+          panel.write_text(text.replace(old, new))
+          test = app / 'test/bnn_life_event_evidence_gate_v370_test.dart'
+          text = test.read_text()
+          assert text.count('      await tester.runAsync(') == 1
+          text = text.replace('      await tester.runAsync(', '      final loadedReviews = await tester.runAsync(')
+          old = '      final screen = BnnLifeEventsPanel(chart: chart());'
+          new = ("      expect(loadedReviews, isNotNull);\n"
+                 "      final screen = BnnLifeEventsPanel(chart: chart(),\n"
+                 "        reviewFuture: Future<List<BnnLifeEventReview>>.value(loadedReviews!));")
+          assert text.count(old) == 1, 'Unexpected widget test fixture'
+          text = text.replace(old, new)
+          old = '      // The top-level engine does not claim a confirmed event time.'
+          new = ("      expect(find.byType(CircularProgressIndicator), findsNothing);\n"
+                 "      expect(find.textContaining('గ్రహస్పర్శ వయస్సు'), findsNothing);\n" + old)
+          assert text.count(old) == 1
+          test.write_text(text.replace(old, new))
+          audit = app / 'docs/BNN_V373_FINANCIAL_EVIDENCE_AUDIT.md'
+          audit.write_text(audit.read_text() + '\nFIX3: Run 42940508825 passed 70 Flutter tests and failed one loading-spinner timeout. The UI test now injects real preloaded reviews through an optional Future; normal app loading remains the default. No assertions or tests are suppressed. The updated Flutter suite and APK build still need a GitHub run.\n')
+          # Upload the patched complete source, not the earlier input ZIP.
+          packed = source.with_suffix('.zip.part')
+          with ZipFile(packed, 'w', ZIP_DEFLATED) as archive:
+              for file in sorted(app.rglob('*')):
+                  if file.is_file():
+                      archive.write(file, 'astro_app/' + file.relative_to(app).as_posix())
+          with ZipFile(packed) as archive:
+              assert archive.testzip() is None
+          packed.replace(source)
+          print('Applied deterministic life-event widget test fix; all tests retained')
           (app / 'android/gradlew').chmod(0o755)
           with open(os.environ['GITHUB_ENV'], 'a') as env:
               env.write('APP_DIR=' + str(app) + '\n')
@@ -133,3 +173,4 @@ jobs:
             ${{ runner.temp }}/bnn-v373-tests.log
           retention-days: 14
           if-no-files-found: ignore
+          
