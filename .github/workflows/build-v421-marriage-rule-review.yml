@@ -1,0 +1,100 @@
+name: Build Annapurna v1.4.421 Marriage Rule Review APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v421-marriage-rule-review.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.421-Marriage-Rule-Review-UI-Fix-FULL.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annapurna-v421-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v421:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout v421 source archive
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-Astro-Vastu-v1.4.421-Marriage-Rule-Review-UI-Fix-FULL.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify and extract source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_BUILD'
+          import hashlib, os, stat, zipfile
+          from pathlib import Path, PurePosixPath
+          archive_path = Path('Annapurna-Astro-Vastu-v1.4.421-Marriage-Rule-Review-UI-Fix-FULL.zip')
+          assert archive_path.is_file(), 'v421 source missing: upload ZIP to repository root'
+          assert hashlib.sha256(archive_path.read_bytes()).hexdigest() == '0a1fb2ad09bb6f214b16cfce18431884c3d8c34138dc5badfbd1b9c8699d3517', 'v421 ZIP checksum mismatch'
+          dest = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v421'
+          dest.mkdir(parents=True,exist_ok=True)
+          with zipfile.ZipFile(archive_path) as z:
+              assert z.testzip() is None, 'Corrupt v421 ZIP'
+              for info in z.infolist():
+                  p=PurePosixPath(info.filename)
+                  assert p.parts and not p.is_absolute() and '..' not in p.parts, info.filename
+                  assert p.parts[0] == 'astro_app' or info.filename.startswith('README-'), info.filename
+                  assert not stat.S_ISLNK(info.external_attr >> 16), info.filename
+              z.extractall(dest)
+          app=dest/'astro_app'
+          assert 'version: 1.4.421+421' in (app/'pubspec.yaml').read_text()
+          source=(app/'lib/screens/topic_varga_review_panel.dart').read_text()
+          assert 'పరిశీలించాల్సిన వర్గచక్రాలు:' in source
+          assert (app/'test/topic_result_card_v391_test.dart').is_file()
+          assert (app/'test/marriage_four_chart_audit_v420_test.dart').is_file()
+          assert (app/'android/app/annapurna-build11.jks').is_file()
+          print('v421 source verified')
+          PY_BUILD
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Flutter dependencies
+        working-directory: ${{ runner.temp }}/annapurna_v421/astro_app
+        run: flutter pub get
+
+      - name: Run previous failed test and marriage regression tests
+        working-directory: ${{ runner.temp }}/annapurna_v421/astro_app
+        run: |
+          flutter test --no-pub --reporter expanded \
+            test/topic_result_card_v391_test.dart \
+            test/marriage_four_chart_audit_v420_test.dart \
+            test/marriage_chrome_if_then_test.dart \
+            test/marriage_combined_panel_v390_test.dart \
+            test/varga_cross_links_v417_test.dart \
+            test/career_options_card_v394_test.dart
+
+      - name: Build release APK
+        working-directory: ${{ runner.temp }}/annapurna_v421/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.421-Marriage-Rule-Review-APK
+          path: ${{ runner.temp }}/annapurna_v421/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
