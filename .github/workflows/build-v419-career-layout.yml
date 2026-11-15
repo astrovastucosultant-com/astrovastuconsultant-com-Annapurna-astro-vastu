@@ -1,0 +1,97 @@
+name: Build Annapurna v1.4.419 Career Layout Fixed APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v419-career-layout.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.419-Career-Layout-Fixed-FULL.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annapurna-v419-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v419:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout v419 archive only
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-Astro-Vastu-v1.4.419-Career-Layout-Fixed-FULL.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify and extract the v419 Flutter project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import stat
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          source = Path('Annapurna-Astro-Vastu-v1.4.419-Career-Layout-Fixed-FULL.zip')
+          assert source.is_file(), 'v419 source ZIP is missing from repository root'
+          assert hashlib.sha256(source.read_bytes()).hexdigest() == 'a5eb8199233639fba199301ea6a2c76fd308dea393d014f01804284bd95b05ee', 'Unexpected v419 source ZIP checksum'
+          destination = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v419'
+          destination.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(source) as archive:
+              assert archive.testzip() is None, 'Corrupted source ZIP'
+              for item in archive.infolist():
+                  p = PurePosixPath(item.filename)
+                  assert p.parts and not p.is_absolute() and '..' not in p.parts, f'Unsafe ZIP path: {item.filename}'
+                  assert p.parts[0] in ('astro_app', 'README-VARGA-CROSS-v417.txt', 'README-VRUTTULU-418.txt', 'README-V419-CAREER-LAYOUT-FIX.txt'), f'Unexpected ZIP content: {item.filename}'
+                  assert not stat.S_ISLNK(item.external_attr >> 16), f'Symlink not allowed: {item.filename}'
+              archive.extractall(destination)
+          app = destination / 'astro_app'
+          assert 'version: 1.4.419+419' in (app / 'pubspec.yaml').read_text()
+          assert (app / 'test/varga_cross_links_v417_test.dart').is_file()
+          assert (app / 'lib/screens/varga_cross_links_v417.dart').is_file()
+          assert (app / 'lib/screens/career_options_card_v394.dart').is_file()
+          assert (app / 'android/app/annapurna-build11.jks').is_file()
+          print('v419 source and archive integrity OK')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Flutter dependencies
+        working-directory: ${{ runner.temp }}/annapurna_v419/astro_app
+        run: flutter pub get
+
+      - name: Check v419 mobile career layout, percentages and v417 cross-varga navigation
+        working-directory: ${{ runner.temp }}/annapurna_v419/astro_app
+        run: flutter test --no-pub --reporter expanded test/varga_cross_links_v417_test.dart test/career_options_card_v394_test.dart
+
+      - name: Build release APK
+        working-directory: ${{ runner.temp }}/annapurna_v419/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.419-Career-Layout-APK
+          path: ${{ runner.temp }}/annapurna_v419/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
