@@ -1,0 +1,96 @@
+name: Build Annapurna v1.4.417 Cross-Varga APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v417-cross-varga.yml'
+      - 'Annapurna-v1.4.417-FULL-Source-Download.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annapurna-v417-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v417:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout v417 archive only
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-v1.4.417-FULL-Source-Download.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify and extract the v417 Flutter project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import stat
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          source = Path('Annapurna-v1.4.417-FULL-Source-Download.zip')
+          assert source.is_file(), 'v417 source ZIP is missing from repository root'
+          assert hashlib.sha256(source.read_bytes()).hexdigest() == 'd19407e0cd58366b3f8d28a3e5f425b962ba7cd7e57c4d500f39968f6ccb394f', 'Unexpected v417 source ZIP checksum'
+          destination = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v417'
+          destination.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(source) as archive:
+              assert archive.testzip() is None, 'Corrupted source ZIP'
+              for item in archive.infolist():
+                  p = PurePosixPath(item.filename)
+                  assert p.parts and not p.is_absolute() and '..' not in p.parts, f'Unsafe ZIP path: {item.filename}'
+                  assert p.parts[0] in ('astro_app', 'README-VARGA-CROSS-v417.txt'), f'Unexpected ZIP content: {item.filename}'
+                  assert not stat.S_ISLNK(item.external_attr >> 16), f'Symlink not allowed: {item.filename}'
+              archive.extractall(destination)
+          app = destination / 'astro_app'
+          assert 'version: 1.4.417+417' in (app / 'pubspec.yaml').read_text()
+          assert (app / 'test/varga_cross_links_v417_test.dart').is_file()
+          assert (app / 'lib/screens/varga_cross_links_v417.dart').is_file()
+          assert (app / 'android/app/annapurna-build11.jks').is_file()
+          print('v417 source and archive integrity OK')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Flutter dependencies
+        working-directory: ${{ runner.temp }}/annapurna_v417/astro_app
+        run: flutter pub get
+
+      - name: Check v417 cross-varga navigation
+        working-directory: ${{ runner.temp }}/annapurna_v417/astro_app
+        run: flutter test --no-pub --reporter expanded test/varga_cross_links_v417_test.dart
+
+      - name: Build release APK
+        working-directory: ${{ runner.temp }}/annapurna_v417/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.417-Cross-Varga-APK
+          path: ${{ runner.temp }}/annapurna_v417/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
