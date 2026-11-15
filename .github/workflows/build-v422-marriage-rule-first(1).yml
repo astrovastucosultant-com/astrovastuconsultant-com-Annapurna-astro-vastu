@@ -1,0 +1,104 @@
+name: Build Annapurna v1.4.422 Marriage Rule-First APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v422-marriage-rule-first.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.422-Rule-First-Marriage-FULL.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annapurna-v422-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v422:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source archive
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-Astro-Vastu-v1.4.422-Rule-First-Marriage-FULL.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify and extract Flutter source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_EXTRACT'
+          import hashlib, os, stat, zipfile
+          from pathlib import Path, PurePosixPath
+          archive = Path('Annapurna-Astro-Vastu-v1.4.422-Rule-First-Marriage-FULL.zip')
+          assert archive.is_file(), 'v422 ZIP missing from repository root'
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == '11fa863f78c7d59872353eed3f0345fa452a5b9ed348e3741edfc58f8b1a452a', 'v422 ZIP checksum mismatch'
+          out = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v422'
+          out.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(archive) as z:
+              assert z.testzip() is None, 'Corrupted source ZIP'
+              for info in z.infolist():
+                  item = PurePosixPath(info.filename)
+                  assert not item.is_absolute() and item.parts and '..' not in item.parts, info.filename
+                  assert item.parts[0] == 'astro_app' or info.filename.startswith('README-'), info.filename
+                  assert not stat.S_ISLNK(info.external_attr >> 16), info.filename
+              z.extractall(out)
+          project = out / 'astro_app'
+          assert 'version: 1.4.422+422' in (project / 'pubspec.yaml').read_text()
+          for path in ['lib/screens/marriage_audit_v420.dart',
+                       'lib/screens/topic_result_card_v391.dart',
+                       'lib/screens/marriage_combined_panel_v390.dart',
+                       'test/marriage_rule_first_v422_test.dart',
+                       'android/app/annapurna-build11.jks']:
+              assert (project / path).is_file(), f'Missing {path}'
+          print('v422 ZIP and updated source verified')
+          PY_EXTRACT
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Flutter dependencies
+        working-directory: ${{ runner.temp }}/annapurna_v422/astro_app
+        run: flutter pub get
+
+      - name: Test marriage rule-first layout and regressions
+        working-directory: ${{ runner.temp }}/annapurna_v422/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test --no-pub --reporter expanded \
+            test/marriage_rule_first_v422_test.dart \
+            test/marriage_four_chart_audit_v420_test.dart \
+            test/marriage_chrome_if_then_test.dart \
+            test/topic_result_card_v391_test.dart \
+            test/marriage_combined_panel_v390_test.dart \
+            test/varga_cross_links_v417_test.dart \
+            test/career_options_card_v394_test.dart
+
+      - name: Build release APK
+        working-directory: ${{ runner.temp }}/annapurna_v422/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.422-Marriage-Rule-First-APK
+          path: ${{ runner.temp }}/annapurna_v422/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
