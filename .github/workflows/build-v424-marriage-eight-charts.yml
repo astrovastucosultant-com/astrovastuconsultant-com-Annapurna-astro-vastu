@@ -1,4 +1,18 @@
 
+      - name: Fix PDF test asynchronous execution
+        working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
+        shell: bash
+        run: |
+          python3 - <<'PY_FIX'
+          from pathlib import Path
+          p = Path('test/marriage_matching_four_charts_v424_test.dart')
+          s = p.read_text()
+          old = "testWidgets('PDF includes real chart pages rather than only sign lists', (tester) async {"
+          new = "test('PDF includes real chart pages rather than only sign lists', () async {"
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          PY_FIX
+          
 name: Build Annapurna v1.4.424 Marriage Matching Eight Charts APK
 
 on:
