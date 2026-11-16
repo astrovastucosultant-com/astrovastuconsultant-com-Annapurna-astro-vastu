@@ -1,0 +1,104 @@
+name: Build Annapurna v1.4.423 KP Time Jamakola Home APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v423-kp-time-jamakola-home.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.423-KP-Time-Jamakola-Home-FULL.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annapurna-v423-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v423:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout only v423 source archive
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-Astro-Vastu-v1.4.423-KP-Time-Jamakola-Home-FULL.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify ZIP and extract Flutter project
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_VERIFY'
+          import hashlib, os, stat, zipfile
+          from pathlib import Path, PurePosixPath
+          archive = Path('Annapurna-Astro-Vastu-v1.4.423-KP-Time-Jamakola-Home-FULL.zip')
+          assert archive.is_file(), 'v423 FULL ZIP missing from repository root'
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == '6f4fdb9ed0db948c564711c268fb4c8142744bc9c4666dc47905b2107ce470f1', 'v423 ZIP checksum mismatch'
+          out = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v423'
+          out.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(archive) as z:
+              assert z.testzip() is None, 'Corrupted ZIP'
+              for entry in z.infolist():
+                  path = PurePosixPath(entry.filename)
+                  assert path.parts and not path.is_absolute() and '..' not in path.parts, entry.filename
+                  assert path.parts[0] == 'astro_app' or entry.filename == 'README-V423-KP-JAMAKOLA-HOME.txt', entry.filename
+                  assert not stat.S_ISLNK(entry.external_attr >> 16), entry.filename
+              z.extractall(out)
+          app = out / 'astro_app'
+          assert 'version: 1.4.423+423' in (app / 'pubspec.yaml').read_text()
+          for f in ['lib/screens/birth_details_screen.dart',
+                    'lib/screens/chart_screen.dart',
+                    'lib/screens/jamakola_rule_panel.dart',
+                    'test/home_kp_jamakola_v423_test.dart',
+                    'android/app/annapurna-build11.jks']:
+              assert (app / f).is_file(), 'Missing ' + f
+          print('v423 archive verified')
+          PY_VERIFY
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Flutter dependencies
+        working-directory: ${{ runner.temp }}/annapurna_v423/astro_app
+        run: flutter pub get
+
+      - name: Test home shortcuts, marriage and KP regressions
+        working-directory: ${{ runner.temp }}/annapurna_v423/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test --no-pub --reporter expanded \
+            test/home_kp_jamakola_v423_test.dart \
+            test/marriage_rule_first_v422_test.dart \
+            test/marriage_four_chart_audit_v420_test.dart \
+            test/marriage_chrome_if_then_test.dart \
+            test/topic_result_card_v391_test.dart \
+            test/varga_cross_links_v417_test.dart \
+            test/career_options_card_v394_test.dart
+
+      - name: Build release APK
+        working-directory: ${{ runner.temp }}/annapurna_v423/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.423-KP-Time-Jamakola-Home-APK
+          path: ${{ runner.temp }}/annapurna_v423/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
