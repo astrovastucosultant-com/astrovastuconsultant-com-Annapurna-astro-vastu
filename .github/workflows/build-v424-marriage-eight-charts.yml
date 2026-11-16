@@ -1,1 +1,109 @@
 
+name: Build Annapurna v1.4.424 Marriage Matching Eight Charts APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v424-marriage-eight-charts.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.424-Marriage-Matching-Eight-Charts-FULL.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annapurna-v424-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v424:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout v424 archive only
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-Astro-Vastu-v1.4.424-Marriage-Matching-Eight-Charts-FULL.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify ZIP and unpack Flutter source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_VERIFY'
+          from pathlib import Path, PurePosixPath
+          import hashlib, os, stat, zipfile
+          source = Path('Annapurna-Astro-Vastu-v1.4.424-Marriage-Matching-Eight-Charts-FULL.zip')
+          assert source.is_file(), 'v424 ZIP missing from main repository directory'
+          assert hashlib.sha256(source.read_bytes()).hexdigest() == '2283dc4cb6e328931f25c9e32065f5de90c392444940adf786cc5d652957a108', 'v424 source checksum mismatch'
+          target = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v424'
+          target.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(source) as z:
+              assert z.testzip() is None, 'Corrupted v424 archive'
+              for f in z.infolist():
+                  p = PurePosixPath(f.filename)
+                  assert p.parts and not p.is_absolute() and '..' not in p.parts, f.filename
+                  assert p.parts[0] == 'astro_app' or f.filename.startswith('README-'), f.filename
+                  assert not stat.S_ISLNK(f.external_attr >> 16), f.filename
+              z.extractall(target)
+          project = target / 'astro_app'
+          assert 'version: 1.4.424+424' in (project / 'pubspec.yaml').read_text()
+          for filename in [
+              'lib/astrology/marriage_matching_charts_v424.dart',
+              'lib/screens/marriage_matching_comparison_v424.dart',
+              'lib/screens/chart_screen.dart',
+              'lib/services/marriage_pdf_report_service.dart',
+              'test/marriage_matching_four_charts_v424_test.dart',
+              'android/app/annapurna-build11.jks',
+          ]:
+              assert (project / filename).is_file(), f'Missing {filename}'
+          print('v424 ZIP intact; 8 live comparison charts and PDF renderer present')
+          PY_VERIFY
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Flutter dependencies
+        working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
+        run: flutter pub get
+
+      - name: Test eight matching charts, PDF, and earlier functionality
+        working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test --no-pub --reporter expanded \
+            test/marriage_matching_four_charts_v424_test.dart \
+            test/marriage_rule_first_v422_test.dart \
+            test/marriage_four_chart_audit_v420_test.dart \
+            test/marriage_chrome_if_then_test.dart \
+            test/marriage_material_registry_test.dart \
+            test/home_kp_jamakola_v423_test.dart \
+            test/career_options_card_v394_test.dart
+
+      - name: Build release APK
+        working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.424-Marriage-Matching-Eight-Charts-APK
+          path: ${{ runner.temp }}/annapurna_v424/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+          
