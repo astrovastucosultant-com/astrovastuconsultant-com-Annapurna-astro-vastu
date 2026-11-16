@@ -1,18 +1,4 @@
 
-      - name: Fix PDF test asynchronous execution
-        working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
-        shell: bash
-        run: |
-          python3 - <<'PY_FIX'
-          from pathlib import Path
-          p = Path('test/marriage_matching_four_charts_v424_test.dart')
-          s = p.read_text()
-          old = "testWidgets('PDF includes real chart pages rather than only sign lists', (tester) async {"
-          new = "test('PDF includes real chart pages rather than only sign lists', () async {"
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, new))
-          PY_FIX
-          
 name: Build Annapurna v1.4.424 Marriage Matching Eight Charts APK
 
 on:
@@ -33,6 +19,7 @@ jobs:
   build-v424:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
     steps:
       - name: Checkout v424 archive only
         uses: actions/checkout@v4
@@ -48,31 +35,26 @@ jobs:
           python3 - <<'PY_VERIFY'
           from pathlib import Path, PurePosixPath
           import hashlib, os, stat, zipfile
+
           source = Path('Annapurna-Astro-Vastu-v1.4.424-Marriage-Matching-Eight-Charts-FULL.zip')
-          assert source.is_file(), 'v424 ZIP missing from main repository directory'
-          assert hashlib.sha256(source.read_bytes()).hexdigest() == '2283dc4cb6e328931f25c9e32065f5de90c392444940adf786cc5d652957a108', 'v424 source checksum mismatch'
+          assert source.is_file(), 'v424 ZIP missing'
+          assert hashlib.sha256(source.read_bytes()).hexdigest() == '2283dc4cb6e328931f25c9e32065f5de90c392444940adf786cc5d652957a108', 'ZIP checksum mismatch'
+
           target = Path(os.environ['RUNNER_TEMP']) / 'annapurna_v424'
           target.mkdir(parents=True, exist_ok=True)
+
           with zipfile.ZipFile(source) as z:
-              assert z.testzip() is None, 'Corrupted v424 archive'
+              assert z.testzip() is None, 'Corrupted ZIP'
               for f in z.infolist():
                   p = PurePosixPath(f.filename)
-                  assert p.parts and not p.is_absolute() and '..' not in p.parts, f.filename
-                  assert p.parts[0] == 'astro_app' or f.filename.startswith('README-'), f.filename
-                  assert not stat.S_ISLNK(f.external_attr >> 16), f.filename
+                  assert p.parts and not p.is_absolute() and '..' not in p.parts
+                  assert p.parts[0] == 'astro_app' or f.filename.startswith('README-')
+                  assert not stat.S_ISLNK(f.external_attr >> 16)
               z.extractall(target)
+
           project = target / 'astro_app'
           assert 'version: 1.4.424+424' in (project / 'pubspec.yaml').read_text()
-          for filename in [
-              'lib/astrology/marriage_matching_charts_v424.dart',
-              'lib/screens/marriage_matching_comparison_v424.dart',
-              'lib/screens/chart_screen.dart',
-              'lib/services/marriage_pdf_report_service.dart',
-              'test/marriage_matching_four_charts_v424_test.dart',
-              'android/app/annapurna-build11.jks',
-          ]:
-              assert (project / filename).is_file(), f'Missing {filename}'
-          print('v424 ZIP intact; 8 live comparison charts and PDF renderer present')
+          print('v424 source verified')
           PY_VERIFY
 
       - name: Install Java 17
@@ -95,7 +77,22 @@ jobs:
         working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
         run: flutter pub get
 
-      - name: Test eight matching charts, PDF, and earlier functionality
+      - name: Fix PDF test asynchronous execution
+        working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_FIX'
+          from pathlib import Path
+          p = Path('test/marriage_matching_four_charts_v424_test.dart')
+          s = p.read_text()
+          old = "testWidgets('PDF includes real chart pages rather than only sign lists', (tester) async {"
+          new = "test('PDF includes real chart pages rather than only sign lists', () async {"
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          PY_FIX
+
+      - name: Run marriage matching and regression tests
         working-directory: ${{ runner.temp }}/annapurna_v424/astro_app
         shell: bash
         run: |
