@@ -136,6 +136,27 @@ jobs:
           PY_ASYNC_MOCK
           flutter pub get
 
+      - name: Update v429 chart-order test for v430 Kavippu argument
+        working-directory: ${{ runner.temp }}/annapurna_v430/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_TEST_FIX'
+          from pathlib import Path
+          p = Path('test/jamakola_result_order_v429_test.dart')
+          src = p.read_text()
+          old = '_decisionFacts(chart,special,ar,chatraSign,ch)'
+          new = '_decisionFacts(chart,special,ar,chatraSign,effectiveKav)'
+          assert src.count(old) == 1, 'Expected old test assertion not found'
+          view = Path('lib/screens/jamakola_rule_panel.dart').read_text()
+          start = view.index('Widget _selectedChart(')
+          end = view.index('// On phones the planetary data', start)
+          section = view[start:end]
+          assert section.index('_JamakkolSouthChart(') < section.index(new) < section.index('_rulesPanel(chart,special)')
+          p.write_text(src.replace(old, new, 1))
+          print('Chart-first order validated, and regression test updated')
+          PY_TEST_FIX
+
       - name: Validate Jama-only rules, custom subjects, combined source and chart order
         working-directory: ${{ runner.temp }}/annapurna_v430/astro_app
         run: |
@@ -161,3 +182,4 @@ jobs:
           path: ${{ runner.temp }}/annapurna_v430/astro_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
+          
