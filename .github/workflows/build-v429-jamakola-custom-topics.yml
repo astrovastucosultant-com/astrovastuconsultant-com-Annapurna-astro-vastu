@@ -3,9 +3,8 @@ name: Build Annapurna v1.4.429 Jamakola Topic Selection & Scoped Rules APK
 on:
   workflow_dispatch:
   push:
-    paths:     
-    - '.github/workflows/build-v429-jamakola-custom-topics.yml'
-      
+    paths:
+      - '.github/workflows/build-v429-jamakola-custom-topics.yml'
       - 'Annapurna-Astro-Vastu-v1.4.429-Jamakola-Topics-Customization-FULL.zip'
 
 permissions:
@@ -160,3 +159,4 @@ jobs:
           path: ${{ runner.temp }}/annapurna_v429/astro_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
+          
