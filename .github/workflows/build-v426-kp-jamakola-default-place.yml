@@ -81,6 +81,53 @@ jobs:
         working-directory: ${{ runner.temp }}/annapurna_v426/astro_app
         run: flutter pub get
 
+      - name: Register in-memory SharedPreferencesAsync for storage tests
+        working-directory: ${{ runner.temp }}/annapurna_v426/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_ASYNC_MOCK'
+          from pathlib import Path
+
+          pub = Path('pubspec.yaml')
+          body = pub.read_text()
+          needle = 'dev_dependencies:\n'
+          assert body.count(needle) == 1
+          assert 'shared_preferences_platform_interface:' not in body
+          pub.write_text(body.replace(needle,
+              'dev_dependencies:\n  shared_preferences_platform_interface: ^2.4.2\n', 1))
+
+          imports = (
+              "import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';\n"
+              "import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';\n"
+          )
+          mock_setup = '''  setUpAll(() {
+              SharedPreferencesAsyncPlatform.instance = InMemorySharedPreferencesAsync.empty();
+            });
+            setUp(() async {
+              SharedPreferences.setMockInitialValues({});
+              await SharedPreferencesAsync().clear();
+            });'''
+          replacements = {
+              'test/question_place_default_v426_test.dart':
+                  '  setUp(() => SharedPreferences.setMockInitialValues({}));',
+              'test/place_storage_service_test.dart':
+                  '''  setUp(() {
+              SharedPreferences.setMockInitialValues({});
+            });''',
+          }
+          for filename, old in replacements.items():
+              path = Path(filename)
+              text = path.read_text()
+              marker = "import 'package:shared_preferences/shared_preferences.dart';\n"
+              assert text.count(marker) == 1, filename
+              assert text.count(old) == 1, filename
+              text = text.replace(marker, marker + imports, 1)
+              path.write_text(text.replace(old, mock_setup, 1))
+              print('Registered async preferences mock:', filename)
+          PY_ASYNC_MOCK
+          flutter pub get
+
       - name: Validate saved default place and quick-system navigation
         working-directory: ${{ runner.temp }}/annapurna_v426/astro_app
         run: |
@@ -100,3 +147,4 @@ jobs:
           path: ${{ runner.temp }}/annapurna_v426/astro_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
+          
