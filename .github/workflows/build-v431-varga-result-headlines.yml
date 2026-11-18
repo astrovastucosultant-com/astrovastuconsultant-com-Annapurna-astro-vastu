@@ -298,4 +298,3 @@ jobs:
           path: ${{ runner.temp }}/annapurna_v431/astro_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
-          
