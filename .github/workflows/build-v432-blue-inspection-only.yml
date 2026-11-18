@@ -273,6 +273,77 @@ jobs:
           print('Fixed v432 dynamic result ink and inspection Card Material painting')
           PY_FIX_V432
 
+      - name: Verify two-tap inspection and scoped chart scroll regression tests
+        working-directory: ${{ runner.temp }}/annapurna_v432/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_FIX_V432_TESTS'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              assert s.count(old) == 1, f'Fixture differs: {path}; {old[:50]}'
+              p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          # There are now TWO collapsed layers: the varga headline, then the
+          # blue inspection section.  Test that the second explicit tap
+          # opens real chart details rather than disabling the regression.
+          replace_exact(
+              'test/topic_inspection_headline_v431_test.dart',
+              "    expect(find.text('D1 inspection'), findsOneWidget);",
+              "    final inspection = find.text('2. జాతక పరిశీలన');\n"
+              "    await tester.ensureVisible(inspection);\n"
+              "    await tester.tap(inspection);\n"
+              "    await tester.pumpAndSettle();\n"
+              "    expect(find.text('D1 inspection'), findsOneWidget);",
+          )
+          replace_exact(
+              'test/topic_result_card_v391_test.dart',
+              "      expect(find.text('D1 fixture inspection'), findsOneWidget);",
+              "      final inspection = find.text('2. జాతక పరిశీలన');\n"
+              "      await tester.ensureVisible(inspection);\n"
+              "      await tester.tap(inspection);\n"
+              "      await tester.pumpAndSettle();\n"
+              "      expect(find.text('D1 fixture inspection'), findsOneWidget);",
+          )
+
+          # Verify the details remain collapsed until explicitly opened.
+          # The source footer belongs to the MODAL ListView, not a 40-pixel
+          # inner chart Scrollable.  Target that ListView's Scrollable.
+          replace_exact(
+              'test/topic_varga_review_panel_test.dart',
+              "    expect(find.textContaining('D9 పూర్తి పరీక్ష లేదు'), findsOneWidget);\n"
+              "    await tester.scrollUntilVisible(find.textContaining('చార్ట్ క్రమ మూలం: VARGA-CROSS-001'), 140, scrollable: find.byType(Scrollable).last);\n"
+              "    expect(find.textContaining('చార్ట్ క్రమ మూలం: VARGA-CROSS-001'), findsOneWidget);",
+              "    final inspection = find.text('2. జాతక పరిశీలన');\n"
+              "    await tester.ensureVisible(inspection);\n"
+              "    await tester.tap(inspection);\n"
+              "    await tester.pumpAndSettle();\n"
+              "    expect(find.textContaining('D9 పూర్తి పరీక్ష లేదు'), findsOneWidget);\n"
+              "    final sheetScroll = find.descendant(\n"
+              "      of: find.descendant(\n"
+              "        of: find.byType(BottomSheet), matching: find.byType(ListView),\n"
+              "      ).first,\n"
+              "      matching: find.byType(Scrollable),\n"
+              "    ).first;\n"
+              "    await tester.scrollUntilVisible(\n"
+              "      find.textContaining('చార్ట్ క్రమ మూలం: VARGA-CROSS-001'),\n"
+              "      160, scrollable: sheetScroll,\n"
+              "    );\n"
+              "    expect(find.textContaining('చార్ట్ క్రమ మూలం: VARGA-CROSS-001'), findsOneWidget);",
+          )
+
+          # Source navigation still has to be exercised, not skipped.
+          for test in ('topic_inspection_headline_v431_test.dart',
+                       'topic_result_card_v391_test.dart',
+                       'topic_varga_review_panel_test.dart'):
+              src=Path('test')/test
+              assert 'expect(' in src.read_text(encoding='utf-8')
+          print('Real second-tap inspection and modal source scroll test fixtures updated')
+          PY_FIX_V432_TESTS
+
       - name: Validate v432 inspection highlight, varga and Jamakola regressions
         working-directory: ${{ runner.temp }}/annapurna_v432/astro_app
         run: |
