@@ -235,6 +235,44 @@ jobs:
           patch(Path('.'))
           PY_FIX_V431
 
+      - name: Fix v432 source compile and inspection Material widgets
+        working-directory: ${{ runner.temp }}/annapurna_v432/astro_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_FIX_V432'
+          from pathlib import Path
+          
+          varga = Path('lib/screens/topic_varga_review_panel.dart')
+          code = varga.read_text(encoding='utf-8')
+          old = "const Text(\n                '3. ఫలితం',"
+          new = "Text(\n                '3. ఫలితం',"
+          assert code.count(old) == 1, 'Unexpected v432 result-header source'
+          varga.write_text(code.replace(old, new, 1), encoding='utf-8')
+          
+          inspection = Path('lib/screens/rule_inspection_highlight_v432.dart')
+          code = inspection.read_text(encoding='utf-8')
+          old = '''    return Container(
+                margin: const EdgeInsets.symmetric(vertical: 5),
+                decoration: BoxDecoration(color: inspectionBackground,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: inspectionBlue.withOpacity(.45))),
+                child: ExpansionTile('''
+          new = '''    return Card(
+                margin: const EdgeInsets.symmetric(vertical: 5),
+                elevation: 0,
+                color: inspectionBackground,
+                clipBehavior: Clip.antiAlias,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  side: BorderSide(color: inspectionBlue.withOpacity(.45)),
+                ),
+                child: ExpansionTile('''
+          assert code.count(old) == 1, 'Unexpected v432 inspection-card source'
+          inspection.write_text(code.replace(old, new, 1), encoding='utf-8')
+          print('Fixed v432 dynamic result ink and inspection Card Material painting')
+          PY_FIX_V432
+
       - name: Validate v432 inspection highlight, varga and Jamakola regressions
         working-directory: ${{ runner.temp }}/annapurna_v432/astro_app
         run: |
@@ -268,3 +306,4 @@ jobs:
           path: ${{ runner.temp }}/annapurna_v432/astro_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
+          
