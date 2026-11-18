@@ -321,7 +321,7 @@ jobs:
               "    await tester.ensureVisible(inspection);\n"
               "    await tester.tap(inspection);\n"
               "    await tester.pumpAndSettle();\n"
-              "    expect(find.textContaining('D9 పూర్తి పరీక్ష లేదు'), findsOneWidget);\n"
+              "    expect(find.text('D9 పూర్తి పరీక్ష లేదు'), findsOneWidget);\n"
               "    final sheetScroll = find.descendant(\n"
               "      of: find.descendant(\n"
               "        of: find.byType(BottomSheet), matching: find.byType(ListView),\n"
