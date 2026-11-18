@@ -198,6 +198,11 @@ jobs:
               old='await tester.ensureVisible(d1);'
               assert s.count(old)==1
               s=s.replace(old,"await tester.scrollUntilVisible(d1, 140, scrollable: find.byType(Scrollable).last);")
+              # Expanded evidence scrolls the sheet and lazy-builds its header.
+              # Scroll back to reveal the close icon before interacting with it.
+              old="await tester.ensureVisible(find.byTooltip('మూసివేయి'));"
+              assert s.count(old) == 1, 'Expected close-button fixture once'
+              s=s.replace(old, "await tester.scrollUntilVisible(find.byTooltip('మూసివేయి'), -180, scrollable: find.byType(Scrollable).last);")
               p.write_text(s)
 
               # Newly implemented D6 graph must not count as a validated rule match.
@@ -212,6 +217,47 @@ jobs:
               assert s.count(old)==1
               s=s.replace(old,new)
               p.write_text(s)
+
+              # Assertions test availability of expand/collapse, not hiding failures.
+              assert 'testWidgets' in (root/'test/topic_result_card_v391_test.dart').read_text()
+              print('Repaired three test fixture files without touching production lib/')
+
+          patch(Path('.'))
+          PY_FIX_V431
+
+      - name: Validate v431 source headlines, varga evidence and v430 Jamakola regressions
+        working-directory: ${{ runner.temp }}/annapurna_v431/astro_app
+        run: |
+          flutter test --no-pub --reporter expanded \
+            test/jamakola_compact_review_v428_test.dart \
+            test/jamakola_result_order_v429_test.dart \
+            test/jamakola_kavippu_auto_contact_v430_test.dart \
+            test/jamakola_topic_isolation_v429_test.dart \
+            test/jamakola_pending_group_v427_test.dart \
+            test/jamakola_rule_facts_test.dart \
+            test/question_place_default_v426_test.dart \
+            test/home_kp_jamakola_v423_test.dart \
+            test/place_storage_service_test.dart \
+            test/topic_inspection_headline_v431_test.dart \
+            test/topic_result_card_v391_test.dart \
+            test/topic_varga_review_panel_test.dart \
+            test/topic_results_v398_test.dart \
+            test/marriage_four_chart_audit_v420_test.dart \
+            test/career_options_card_v394_test.dart \
+            test/wealth_topic_v409_test.dart
+
+      - name: Build signed release APK
+        working-directory: ${{ runner.temp }}/annapurna_v431/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.431-Varga-Result-Headline-Accordion-APK
+          path: ${{ runner.temp }}/annapurna_v431/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+          write_text(s)
 
               # Assertions test availability of expand/collapse, not hiding failures.
               assert 'testWidgets' in (root/'test/topic_result_card_v391_test.dart').read_text()
