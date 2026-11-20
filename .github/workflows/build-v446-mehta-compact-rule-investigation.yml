@@ -1,0 +1,159 @@
+name: Build Annapurna v1.4.446 Mehta Compact Rule Investigation APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-v446-mehta-compact-rule-investigation.yml'
+      - 'Annapurna-Astro-Vastu-v1.4.446-Mehta-Compact-Rule-Investigation-FULL.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: annapurna-v446-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-v446:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source ZIP
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            Annapurna-Astro-Vastu-v1.4.446-Mehta-Compact-Rule-Investigation-FULL.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Verify checksum and unpack full source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_VERIFY'
+          from pathlib import Path, PurePosixPath
+          import hashlib, os, stat, zipfile
+          source=Path('Annapurna-Astro-Vastu-v1.4.446-Mehta-Compact-Rule-Investigation-FULL.zip')
+          assert source.is_file(), 'v446 source ZIP missing'
+          assert hashlib.sha256(source.read_bytes()).hexdigest() == 'b2cb501d9208502c5dd9523493706f73ecf94273f75485269076ece8d78660d5', 'Source hash mismatch'
+          target=Path(os.environ['RUNNER_TEMP'])/'annapurna_v446'
+          target.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(source) as archive:
+              assert archive.testzip() is None, 'ZIP integrity failure'
+              # The FULL archive also contains four root README files.
+              # Validate them explicitly instead of rejecting a valid ZIP.
+              permitted_root_readmes = {
+                  'README-V429-JAMAKOLA-ISOLATED-CUSTOM-TOPICS.txt',
+                  'README-V430-JAMAKOLA-KAVIPPU-SOURCE-AND-CONTACT.txt',
+                  'README-V431-RESULT-HEADLINE-ACCORDION.txt',
+                  'README-V432-BLUE-INSPECTION-ONLY.txt',
+              }
+              for member in archive.infolist():
+                  entry=PurePosixPath(member.filename)
+                  assert entry.parts and not entry.is_absolute() and '..' not in entry.parts, member.filename
+                  assert not stat.S_ISLNK(member.external_attr >> 16), member.filename
+                  assert entry.parts[0] == 'astro_app' or member.filename in permitted_root_readmes, member.filename
+              archive.extractall(target)
+          root=target/'astro_app'
+          assert 'version: 1.4.446+446' in (root/'pubspec.yaml').read_text()
+          for f in ('lib/astrology/western_timing_settings_v433.dart',
+                    'lib/screens/western_timing_tab.dart',
+                    'lib/astrology/western_timing_engine_v434.dart',
+                    'test/western_timing_engine_v434_test.dart',
+                    'README-V434-WESTERN-TIMING.txt',
+                    'README-V435-WESTERN-EVENT-TOPICS.txt',
+                    'README-V436-WESTERN-PERIOD-LIFE-STAGE.txt',
+                    'lib/astrology/western_event_period_v436.dart',
+                    'test/western_event_period_v436_test.dart',
+                    'lib/astrology/western_aspect_nature_v442.dart',
+                    'lib/astrology/western_past_event_discovery_v437.dart',
+                    'assets/western/western_past_event_rules_v437.json',
+                    'test/western_aspect_nature_v442_test.dart',
+                    'test/western_past_event_discovery_v437_test.dart',
+                    'README-V442-WESTERN-ASPECT-NATURE.txt',
+                    'README-V443-WESTERN-BTR-CANDIDATES.txt',
+                    'README-V444-MEHTA-PLANET-DIGNITY.txt',
+                    'README-V445-MEHTA-D1-DEGREE-CHART.txt',
+                    'README-V446-MEHTA-COMPACT-RULE-INSPECTION.txt',
+                    'lib/astrology/mehta_natal_chart_service.dart',
+                    'test/mehta_natal_degree_chart_v445_test.dart',
+                    'test/mehta_rule_detail_compact_v446_test.dart',
+                    'lib/astrology/mehta_combination_service.dart',
+                    'lib/screens/mehta_dignity_table_panel.dart',
+                    'test/mehta_dignity_table_v444_test.dart',
+                    'lib/astrology/western_btr_engine_v443.dart',
+                    'lib/screens/western_btr_panel_v443.dart',
+                    'test/western_btr_engine_v443_test.dart',
+                    'lib/screens/chart_screen.dart',
+                    'lib/astrology/western_event_topics_v435.dart',
+                    'test/western_event_topics_v435_test.dart',
+                    'test/western_timing_settings_v433_test.dart',
+                    'lib/screens/rule_inspection_highlight_v432.dart',
+                    'test/rule_inspection_blue_only_v432_test.dart'):
+              assert (root/f).is_file(), f
+          print('v446 source hash and manifest verified')
+          PY_VERIFY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.47.5
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve Flutter dependencies
+        working-directory: ${{ runner.temp }}/annapurna_v446/astro_app
+        run: flutter pub get
+
+      - name: Run Mehta compact Mehta rule and existing regression tests
+        working-directory: ${{ runner.temp }}/annapurna_v446/astro_app
+        run: |
+          flutter test --no-pub --reporter expanded \
+            test/mehta_dignity_table_v444_test.dart \
+            test/mehta_natal_degree_chart_v445_test.dart \
+            test/mehta_rule_detail_compact_v446_test.dart \
+            test/western_btr_engine_v443_test.dart \
+            test/western_timing_settings_v433_test.dart \
+            test/western_timing_engine_v434_test.dart \
+            test/western_event_topics_v435_test.dart \
+            test/western_event_period_v436_test.dart \
+            test/western_past_event_discovery_v437_test.dart \
+            test/western_aspect_nature_v442_test.dart \
+            test/rule_inspection_blue_only_v432_test.dart \
+            test/jamakola_compact_review_v428_test.dart \
+            test/jamakola_result_order_v429_test.dart \
+            test/jamakola_kavippu_auto_contact_v430_test.dart \
+            test/jamakola_topic_isolation_v429_test.dart \
+            test/jamakola_pending_group_v427_test.dart \
+            test/jamakola_rule_facts_test.dart \
+            test/question_place_default_v426_test.dart \
+            test/home_kp_jamakola_v423_test.dart \
+            test/place_storage_service_test.dart \
+            test/topic_inspection_headline_v431_test.dart \
+            test/topic_result_card_v391_test.dart \
+            test/topic_varga_review_panel_test.dart \
+            test/topic_results_v398_test.dart \
+            test/marriage_four_chart_audit_v420_test.dart \
+            test/career_options_card_v394_test.dart \
+            test/wealth_topic_v409_test.dart
+
+      - name: Build signed release APK
+        working-directory: ${{ runner.temp }}/annapurna_v446/astro_app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Annapurna-v1.4.446-Mehta-Compact-Rule-Investigation-APK
+          path: ${{ runner.temp }}/annapurna_v446/astro_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
